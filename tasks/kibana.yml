@@ -1,0 +1,17 @@
+- name: create kibana service
+  k8s_service:
+    metadata:
+      namespace: {{ k8ses_namespace }}
+      name: kibana
+      labels:
+        app: kibana
+    spec:
+      selector:
+        app: kibana
+      ports:
+        - port: 5601
+          name: http
+
+- name: create kibana deployment
+  k8s:
+    definition: "{{ lookup('template', 'templates/kibana.yml.j2') }}"

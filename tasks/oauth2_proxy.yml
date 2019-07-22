@@ -1,0 +1,66 @@
+- name: set oauth2 secrets
+  k8s:
+    api_version: v1
+    kind: Secret
+    resource_definition:
+      metadata:
+        namespace: {{ k8ses_namespace }}
+        name: oauth2-config
+      type: Opaque
+      data:
+        oauth2_proxy.cfg: "{{ lookup('template', 'templates/oauth2_proxy.cfg.j2') | b64encode }}"
+        tls.crt: {{ k8ses_kibana_ssl_crt | b64encode  }}
+        tls.key: {{ k8ses_kibana_ssl_key | b64encode }}
+
+- name: create oauth2 proxy service
+  k8s_service:
+    namespace: {{ k8ses_namespace }}
+    name: oauth2-proxy
+    labels:
+      app: oauth2-proxy
+    selector:
+      app: oauth2-proxy
+    type: LoadBalancer
+    ports:
+      - port: 443
+        targetPort: 4433
+
+- name: create oauth2 proxy deployment
+  k8s:
+    api_version: apps/v1
+    kind: Deployment
+    resource_definition:
+      metadata:
+        namespace: {{ k8ses_namespace }}
+        name: oauth2-proxy
+        labels:
+          app: oauth2-proxy
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: oauth2-proxy
+        template:
+          metadata:
+            labels:
+              app: oauth2-proxy
+          spec:
+            containers:
+              - name: oauth2-proxy
+                image: machinedata/oauth2_proxy:2.2
+                ports:
+                  - name: https
+                    containerPort: 4433
+                livenessProbe:
+                  httpGet:
+                    path: /ping
+                    port: http
+                    scheme: HTTPS
+                volumeMounts:
+                  - name: oauth2-config
+                    mountPath: /conf
+            # spec.template.spec.volumes
+            volumes:
+              - name: oauth2-config
+                secret:
+                  secretName: oauth2-config

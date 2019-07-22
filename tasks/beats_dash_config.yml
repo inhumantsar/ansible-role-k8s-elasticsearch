@@ -1,0 +1,35 @@
+- name: "initialize {{ item.name }} dashboard"
+  k8s:
+    api_version: batch/v1
+    kind: Job
+    resource_definition:
+      metadata:
+        namespace: "{{ k8ses_namespace }}"
+        name: "{{ item.name }}-dashboard-init"
+      spec:
+        template:
+          spec:
+            containers:
+            - name: "{{ item.name }}-dashboard-init"
+              image: "{{ item.image }}:{{ item.image_tag }}"
+              command: "{{ item.init.dashboard }}"
+            restartPolicy: Never
+        backoffLimit: 4
+
+- name: "initialize {{ item.name }} template"
+  k8s:
+    api_version: batch/v1
+    kind: Job
+    resource_definition:
+      metadata:
+        namespace: "{{ k8ses_namespace }}"
+        name: "{{ item.name }}-template-init"
+      spec:
+        template:
+          spec:
+            containers:
+            - name: "{{ item.name }}-template-init"
+              image: "{{ item.image }}:{{ item.image_tag }}"
+              command: "{{ item.init.dashboard }}"
+            restartPolicy: Never
+        backoffLimit: 4

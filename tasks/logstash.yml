@@ -1,0 +1,113 @@
+- name: set up logstash config
+  k8s:
+    api_version: v1
+    kind: ConfigMap
+    resource_definition:
+      metadata:
+        name: logstash-pipelines
+        namespace: {{ k8ses_namespace }}
+      data: 
+        logstash.conf: "{{ lookup('template', './logstash.conf.j2') }}"
+
+- name: Generate an OpenSSL private key with the default values (4096 bits, RSA)
+  openssl_privatekey:
+    path: /etc/ssl/private/{{ k8ses_logstash_cn }}.pem
+  when: k8ses_logstash_selfsigned == true
+
+- name: Generate an OpenSSL Certificate Signing Request
+  openssl_csr:
+    path: /etc/ssl/csr/{{ k8ses_logstash_cn }}.csr
+    privatekey_path: /etc/ssl/private/{{ k8ses_logstash_cn }}.pem
+    common_name: "{{ k8ses_logstash_cn }}"
+  when: k8ses_logstash_selfsigned == true
+
+- name: set up logstash ssl certs using let's encrypt
+  openssl_certificate:
+    path: /etc/ssl/crt/{{ k8ses_logstash_cn }}.crt
+    csr_path: /etc/ssl/csr/{{ k8ses_logstash_cn }}.csr
+    ownca_path: /etc/ssl/crt/ansible_CA.crt
+    ownca_privatekey_path: /etc/ssl/private/ansible_CA.pem
+    provider: ownca
+  when: k8ses_logstash_selfsigned == true
+
+- name: add logstash ssl certs to k8s
+  k8s:
+    api_version: v1
+    kind: Secret
+    resource_definition:
+      metadata:
+        namespace: {{ k8ses_namespace }}
+        name: logstash-tls
+      type: Opaque
+      data:
+        logstash.key: "{{ lookup('file', '/etc/ssl/crt/' + k8ses_logstash_cn + '.key') | b64encode }}"
+        logstash.crt: "{{ lookup('file', '/etc/ssl/crt/' + k8ses_logstash_cn + '.crt') | b64encode }}"
+  when: k8ses_logstash_selfsigned == true
+
+- name: add logstash ssl certs to k8s
+  k8s:
+    api_version: v1
+    kind: Secret
+    resource_definition:
+      metadata:
+        namespace: {{ k8ses_namespace }}
+        name: logstash-tls
+      type: Opaque
+      data:
+        logstash.key: "{{ k8ses_logstash_ssl_key | b64encode }}"
+        logstash.crt: "{{ k8ses_logstash_ssl_crt | b64encode }}"
+  when:
+    - k8ses_logstash_ssl_key != ''
+    - k8ses_logstash_ssl_crt != ''
+    - k8ses_logstash_selfsigned == false
+    
+- name: create logstash service
+  k8s_service:
+    namespace: "{{ k8ses_namespace }}"
+    name: logstash
+    type: LoadBalancer
+    selector:
+      app: logstash
+    ports:
+      - name: beats
+        port: "{{ k8ses_logstash_beats_port }}"
+
+- name: create logstash deployment
+  k8s:
+    api_version: apps/v1
+    kind: Deployment
+    resource_definition:
+      metadata:
+        namespace: "{{ k8ses_namespace }}"
+        name: logstash
+        labels:
+          app: logstash
+      spec:
+        replicas: 2
+        selector:
+          matchLabels:
+            app: logstash
+        template:
+          metadata:
+            labels:
+              app: logstash
+          spec:
+            containers:
+              - name: logstash
+                image: "{{ k8ses_logstash_image }}:{{ k8ses_logstash_image_tag }}"
+                ports:
+                  - containerPort: "{{ logstash_beats_port }}"
+                volumeMounts:
+                  - name: logstash-pipelines
+                    mountPath: /usr/share/logstash/pipeline
+                  - name: logstash-tls
+                    mountPath: /usr/share/logstash/ssl
+
+            # spec.template.spec.volumes
+            volumes:
+              - name: logstash-pipelines
+                configMap:
+                  name: logstash-pipelines
+              - name: logstash-tls
+                secret:
+                  secretName: logstash-tls    

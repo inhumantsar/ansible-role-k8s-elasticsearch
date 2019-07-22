@@ -1,0 +1,2 @@
+k8ses_storage_provisioner: kubernetes.io/aws-ebs
+k8ses_storage_type: gp2

@@ -1,0 +1,91 @@
+- name: set up metricbeat agent config
+  k8s:
+    api_version: v1
+    kind: ConfigMap
+    resource_definition:
+      metadata:
+        name: metricbeat-config
+        namespace: kube-system
+        labels:
+          k8s-app: metricbeat
+      data:
+        metricbeat.yml: "{{ k8ses_metricbeat_agent_config }}"
+
+- name: set up metricbeat daemonset config
+  k8s:
+    api_version: v1
+    kind: ConfigMap
+    resource_definition:
+      metadata:
+        name: metricbeat-daemonset-modules
+        namespace: kube-system
+        labels:
+          k8s-app: metricbeat
+      data: "{{ k8ses_metricbeat_agent_daemonset_config }}"
+
+- name: set up metricbeat daemonset
+  k8s:
+    src: "{{ lookup('template', 'templates/metricbeat_daemonset.yml.j2') }}"
+
+- name: set up metricbeat state metrics config
+  k8s:
+    api_version: v1
+    kind: ConfigMap
+    resource_definition:
+      metadata:
+        name: metricbeat-deployment-modules
+        namespace: kube-system
+        labels:
+          k8s-app: metricbeat
+      data: "{{ k8ses_metricbeat_agent_state_metrics_config }}"
+
+- name: set up metricbeat deployment
+  k8s:
+    src: "{{ lookup('template', 'templates/metricbeat_deployment.yml.j2') }}"
+
+
+- name: bind metricbeat service account to its matching role
+  k8s:
+    api_version: rbac.authorization.k8s.io/v1beta1
+    kind: ClusterRoleBinding
+    resource_definition:
+      metadata:
+        name: metricbeat
+      subjects:
+      - kind: ServiceAccount
+        name: metricbeat
+        namespace: kube-system
+      roleRef:
+        kind: ClusterRole
+        name: metricbeat
+        apiGroup: rbac.authorization.k8s.io
+
+- name: create role
+  k8s:
+    api_version: rbac.authorization.k8s.io/v1beta1
+    kind: ClusterRole
+    resource_definition:
+      metadata:
+        name: metricbeat
+        labels:
+          k8s-app: metricbeat
+      rules:
+      - apiGroups: [""] # "" indicates the core API group
+        resources:
+        - namespaces
+        - events
+        - pods
+        verbs:
+        - get
+        - watch
+        - list
+
+- name: create account
+  api_version: v1
+  kind: ServiceAccount
+  resource_definition:
+    metadata:
+      name: metricbeat
+      namespace: kube-system
+      labels:
+        k8s-app: metricbeat
