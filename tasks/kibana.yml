@@ -1,17 +1,48 @@
 - name: create kibana service
   k8s_service:
-    metadata:
-      namespace: {{ k8ses_namespace }}
-      name: kibana
-      labels:
-        app: kibana
-    spec:
-      selector:
-        app: kibana
-      ports:
-        - port: 5601
-          name: http
+    namespace: "{{ k8ses_namespace }}"
+    name: kibana
+    resource_definition:
+      metadata:
+        labels:
+          app: kibana
+    selector:
+      app: kibana
+    ports:
+      - port: 5601
+        name: http
 
 - name: create kibana deployment
   k8s:
-    definition: "{{ lookup('template', 'templates/kibana.yml.j2') }}"
+    api_version: apps/v1
+    kind: Deployment
+    resource_definition:
+      metadata:
+        namespace: "{{ k8ses_namespace }}"
+        name: kibana
+        labels:
+          app: kibana
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: kibana
+        template:
+          metadata:
+            labels:
+              app: kibana
+          spec:
+            containers:
+              - name: kibana
+                image: "{{ k8ses_kibana_image }}:{{ k8ses_kibana_image_tag }}"
+                ports:
+                  - containerPort: 5601
+                env:
+                  - name: SERVER_NAME
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: metadata.name
+                  - name: SERVER_HOST
+                    value: "0.0.0.0"
+                  - name: ELASTICSEARCH_HOSTS
+                    value: http://es-master.{{ k8ses_namespace }}.svc.cluster.local:9200

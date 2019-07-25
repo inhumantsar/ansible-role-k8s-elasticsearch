@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  namespace: {{ k8ses_namespace }}
+  namespace: "{{ k8ses_namespace }}"
   name: es-data
   labels:
     app: es
@@ -9,7 +9,7 @@ metadata:
 spec:
   serviceName: es-data
   # This is number of nodes that we want to run
-  replicas: {{ data_node.replicas }}
+  replicas: {{ k8ses_data_nodes }}
   selector:
     matchLabels:
       app: es
@@ -69,7 +69,7 @@ spec:
       # spec.template.spec.containers
       containers:
         - name: elasticsearch
-          image: {{ k8ses_es_image }}:{{ k8ses_es_image_tag }}
+          image: "{{  k8ses_es_image }}:{{ k8ses_es_image_tag  }}"
           ports:
             - containerPort: 9200
               name: http
@@ -88,7 +88,7 @@ spec:
             timeoutSeconds: 5
           resources:
             limits:
-              memory: {{ k8ses_data_memory_limit }}
+              memory: "{{  k8ses_data_memory_limit  }}"
 
           # spec.template.spec.containers[es].env
           env:
@@ -107,7 +107,7 @@ spec:
               value: "true"
 
             - name: cluster.name
-              value: {{ k8ses_cluster_name }}
+              value: "{{  k8ses_cluster_name  }}"
             - name: node.name
               valueFrom:
                 fieldRef:
@@ -134,7 +134,7 @@ spec:
       spec:
         accessModes:
           - ReadWriteOnce
-        storageClassName: {{ k8ses_storage_type }}
+        storageClassName: "{{  k8ses_storage_type  }}"
         resources:
           requests:
-            storage: {{ k8ses_data_volsize }}
+            storage: "{{  k8ses_data_volsize  }}"

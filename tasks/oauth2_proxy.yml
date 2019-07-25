@@ -4,17 +4,17 @@
     kind: Secret
     resource_definition:
       metadata:
-        namespace: {{ k8ses_namespace }}
+        namespace: "{{ k8ses_namespace }}"
         name: oauth2-config
       type: Opaque
       data:
         oauth2_proxy.cfg: "{{ lookup('template', 'templates/oauth2_proxy.cfg.j2') | b64encode }}"
-        tls.crt: {{ k8ses_kibana_ssl_crt | b64encode  }}
-        tls.key: {{ k8ses_kibana_ssl_key | b64encode }}
+        tls.crt: "{{  k8ses_kibana_ssl_crt | b64encode   }}"
+        tls.key: "{{  k8ses_kibana_ssl_key | b64encode  }}"
 
 - name: create oauth2 proxy service
   k8s_service:
-    namespace: {{ k8ses_namespace }}
+    namespace: "{{ k8ses_namespace }}"
     name: oauth2-proxy
     labels:
       app: oauth2-proxy
@@ -31,7 +31,7 @@
     kind: Deployment
     resource_definition:
       metadata:
-        namespace: {{ k8ses_namespace }}
+        namespace: "{{ k8ses_namespace }}"
         name: oauth2-proxy
         labels:
           app: oauth2-proxy
@@ -47,7 +47,7 @@
           spec:
             containers:
               - name: oauth2-proxy
-                image: machinedata/oauth2_proxy:2.2
+                image: "{{ k8ses_oauth2_image }}:{{ k8ses_oauth2_image_tag }}"
                 ports:
                   - name: https
                     containerPort: 4433

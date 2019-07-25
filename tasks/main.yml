@@ -2,131 +2,199 @@
 # tasks file for k8s-elasticsearch
 - debug: msg="Starting role k8s-elasticsearch v0.1.0"
 
-- name: create namespace "{{ k8ses_namespace }}"
-  k8s:
-    api_version: v1
-    kind: Namespace
-    resource_definition:
-      metadata:
-        name: "{{ k8ses_namespace }}"
 
-- name: create persistent storage
-  k8s:
-    api_version: storage.k8s.io/v1
-    kind: StorageClass
-    resource_definition:
-      metadata:
-        name: "{{ k8ses_storage_type }}"
+- block:
+  - name: set vars for Amazon Web Services
+    set_fact:
+      k8ses_storage_provisioner: kubernetes.io/aws-ebs
+      k8ses_storage_type: "{{ 'gp2' if not k8ses_storage_type else k8ses_storage_type }}"
+    when:
+      - k8ses_infra == 'aws'
 
-- name: create persistent storage
-  k8s:
-    api_version: v1
-    kind: ConfigMap
-    resource_definition:
-      metadata:
-        namespace: "{{ k8ses_namespace }}"
-        name: es-config
-    data: "{{ k8ses_config_data }}"
+  - name: set vars for Google Compute
+    set_fact:
+      k8ses_storage_provisioner: kubernetes.io/gce-pd
+      k8ses_storage_type: "{{ 'pd-sdd' if not k8ses_storage_type else k8ses_storage_type }}"
+    when:
+      - k8ses_infra == 'gce'
 
-- name: create statefulset for data nodes
-  k8s:
-    state: present
-    definition: "{{ lookup('template', 'templates/es_data.yml.j2') }}"
+  - name: force a storage_type if none specified
+    set_fact:
+      k8ses_storage_type: 'local'
+    when:
+      - not k8ses_storage_type
 
-- name: create statefulset for master nodes
-  k8s:
-    state: present
-    definition: "{{ lookup('template', 'templates/es_master.yml.j2') }}"
+  - name: "create namespace {{ k8ses_namespace }}"
+    k8s:
+      api_version: v1
+      kind: Namespace
+      resource_definition:
+        metadata:
+          name: "{{ k8ses_namespace }}"
 
-- name: set pod distruption budget for all nodes
-  k8s:
-    state: present
-    api_version: policy/v1beta1
-    kind: PodDisruptionBudget
-    resource_definition:
-      metadata:
-        namespace: "{{ k8ses_namespace }}"
-        name: es-{{ item }}
-      spec:
-        maxUnavailable: 1
-        selector:
-          matchLabels:
+  - name: create persistent storage class
+    k8s:
+      api_version: storage.k8s.io/v1
+      kind: StorageClass
+      namespace: "{{ k8ses_namespace }}"
+      resource_definition:
+        provisioner: "{{ k8ses_storage_provisioner }}"
+        metadata:
+          name: "{{ k8ses_storage_type }}"
+        reclaimPolicy: Retain
+        allowVolumeExpansion: true
+        volumeBindingMode: WaitForFirstConsumer
+
+  - name: set kubernetes config
+    k8s:
+      api_version: v1
+      kind: ConfigMap
+      resource_definition:
+        metadata:
+          namespace: "{{ k8ses_namespace }}"
+          name: es-config
+        data: "{{ k8ses_config_data }}"
+
+
+  - name: create statefulset for master nodes
+    k8s:
+      state: present
+      definition: "{{ lookup('template', 'templates/es_master.yml.j2') }}"
+
+  - name: create master service
+    k8s_service:
+      namespace: "{{ k8ses_namespace }}"
+      name: es-master
+      resource_definition:
+        metadata:
+          labels:
             app: es
-            role: "{{ item }}"
+            role: master
+      selector:
+        app: es
+        role: master
+      ports:
+        - port: 9200
+          name: http
+        - port: 9300
+          name: node-to-node
+
+  - name: create statefulset for data nodes
+    k8s:
+      state: present
+      definition: "{{ lookup('template', 'templates/es_data.yml.j2') }}"
+
+  - name: create data service
+    k8s_service:
+      namespace: "{{ k8ses_namespace }}"
+      name: es-data
+      resource_definition:
+        metadata:
+          labels:
+            app: es
+            role: data
+      selector:
+        app: es
+        role: master
+      ports:
+        - port: 9200
+          name: http
+        - port: 9300
+          name: node-to-node
+
+  - name: set pod distruption budget for all nodes
+    k8s:
+      state: present
+      api_version: policy/v1beta1
+      kind: PodDisruptionBudget
+      resource_definition:
+        metadata:
+          namespace: "{{ k8ses_namespace }}"
+          name: es-{{ item }}
+        spec:
+          maxUnavailable: 1
+          selector:
+            matchLabels:
+              app: es
+              role: "{{ item }}"
     with_items:
       - "data"
       - "master"
+  tags:
+    - cluster
 
-- name: create master service
-  k8s_service:
-    api_version: v1
-    kind: Service
-    metadata:
-      namespace: {{ k8ses_namespace }}
-      name: es-master
-      labels:
-        app: es
-        role: master
-    spec:
-      clusterIP: None
-      selector:
-        app: es
-        role: master
-      ports:
-        - port: 9200
-          name: http
-        - port: 9300
-          name: node-to-node
-
-- name: create data service
-  k8s_service:
-    metadata:
-      namespace: {{ k8ses_namespace }}
-      name: es-data
-      labels:
-        app: es
-        role: data
-    spec:
-      clusterIP: None
-      selector:
-        app: es
-        role: master
-      ports:
-        - port: 9200
-          name: http
-        - port: 9300
-          name: node-to-node
 
 - name: set up kibana
-  include_tasks: kibana.yml
+  import_tasks: kibana.yml
   when:
     - k8ses_manage_kibana == true
+  tags:
+    - kibana
 
-- name: set up beats dashboards and templates
-  include_tasks: beats_dash_config.yml
-  with_items:
-    - name: filebeat
-      image: "{{ k8ses_filebeat_image }}"
-      image_tag: "{{ k8ses_es_version }}"
-      init:
-        dashboard: [ "filebeat", "setup", "--dashboards",
-          "-E", "output.logstash.enabled=false",
-          "-E", 'output.elasticsearch.hosts=["es.{{ k8ses_namespace }}.svc.cluster.local:9200"]',
-          "-E", 'setup.kibana.host="kibana.{{ k8ses_namespace }}.svc.cluster.local:5601"' ]
-        template: [ "filebeat", "setup", "--template",
-          "-E", "output.logstash.enabled=false",
-          "-E", 'output.elasticsearch.hosts=["es.{{ k8ses_namespace }}.svc.cluster.local:9200"]' ]
-    - name: metricbeat
-      image: "{{ k8ses_metricbeat_image }}"
-      image_tag: "{{ k8ses_es_version }}"
-      init:
-          dashboard: [ "metricbeat", "setup", "--dashboards",
+  # need a waiter here
+
+- block:
+  - name: set up beats dashboards and templates
+    include_tasks: beats_dash_config.yml
+    with_items:
+      - name: filebeat
+        image: "{{ k8ses_filebeat_image }}"
+        image_tag: "{{ k8ses_es_version }}"
+        init:
+          dashboard: [ "filebeat", "setup", "--dashboards",
             "-E", "output.logstash.enabled=false",
-            "-E", 'output.elasticsearch.hosts=["es.{{ k8ses_namespace }}.svc.cluster.local:9200"]',
+            "-E", 'output.elasticsearch.hosts=["es-master.{{ k8ses_namespace }}.svc.cluster.local:9200"]',
             "-E", 'setup.kibana.host="kibana.{{ k8ses_namespace }}.svc.cluster.local:5601"' ]
-          template: [ "metricbeat", "setup", "--template",
+          template: [ "filebeat", "setup", "--template",
             "-E", "output.logstash.enabled=false",
-            "-E", 'output.elasticsearch.hosts=["es.{{ k8ses_namespace }}.svc.cluster.local:9200"]' ]
-  when:
-    - k8ses_manage_beats_dash_config == true
+            "-E", 'output.elasticsearch.hosts=["es-master.{{ k8ses_namespace }}.svc.cluster.local:9200"]' ]
+      - name: metricbeat
+        image: "{{ k8ses_metricbeat_image }}"
+        image_tag: "{{ k8ses_es_version }}"
+        init:
+            dashboard: [ "metricbeat", "setup", "--dashboards",
+              "-E", "output.logstash.enabled=false",
+              "-E", 'output.elasticsearch.hosts=["es-master.{{ k8ses_namespace }}.svc.cluster.local:9200"]',
+              "-E", 'setup.kibana.host="kibana.{{ k8ses_namespace }}.svc.cluster.local:5601"' ]
+            template: [ "metricbeat", "setup", "--template",
+              "-E", "output.logstash.enabled=false",
+              "-E", 'output.elasticsearch.hosts=["es-master.{{ k8ses_namespace }}.svc.cluster.local:9200"]' ]
+    when:
+      - k8ses_manage_beats_dash_config == true
+  tags:
+    - dashboards
 
+- name: set up filebeat agent
+  import_tasks: filebeat_agent.yml
+  when:
+    - k8ses_manage_filebeat_agent == true
+  tags:
+    - k8s_monitoring
+
+- name: set up metricbeat agent
+  import_tasks: metricbeat_agent.yml
+  when:
+    - k8ses_manage_metricbeat_agent == true
+  tags:
+    - k8s_monitoring
+
+- name: set up logstash
+  import_tasks: logstash.yml
+  when:
+    - k8ses_manage_logstash == true
+  tags:
+    - logstash
+
+- name: set up oauth2 proxy
+  import_tasks: oauth2_proxy.yml
+  when:
+    - k8ses_manage_oauth2_proxy == true
+  tags:
+    - proxy
+
+- name: set up nginx proxy
+  import_tasks: nginx_proxy.yml
+  when:
+    - k8ses_manage_nginx_proxy == true
+  tags:
+    - proxy

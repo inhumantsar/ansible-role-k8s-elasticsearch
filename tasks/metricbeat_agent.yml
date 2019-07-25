@@ -9,7 +9,19 @@
         labels:
           k8s-app: metricbeat
       data:
-        metricbeat.yml: "{{ k8ses_metricbeat_agent_config }}"
+        metricbeat.yml: |-
+          metricbeat.config.modules:
+            # Mounted `metricbeat-daemonset-modules` configmap:
+            path: ${path.config}/modules.d/*.yml
+            # Reload module configs as they change:
+            reload.enabled: false
+
+          processors:
+            - add_cloud_metadata:
+
+          output.elasticsearch:
+            hosts: ['http://es-master.{{ k8ses_namespace }}.svc.cluster.local:9200']
+
 
 - name: set up metricbeat daemonset config
   k8s:
@@ -21,11 +33,47 @@
         namespace: kube-system
         labels:
           k8s-app: metricbeat
-      data: "{{ k8ses_metricbeat_agent_daemonset_config }}"
+      data:  
+      system.yml: |-
+        - module: system
+          period: 10s
+          metricsets:
+            - cpu
+            - load
+            - memory
+            - network
+            - process
+            - process_summary
+            #- core
+            #- diskio
+            #- socket
+          processes: ['.*']
+          process.include_top_n:
+            by_cpu: 5      # include top 5 processes by CPU
+            by_memory: 5   # include top 5 processes by memory
+
+        - module: system
+          period: 1m
+          metricsets:
+            - filesystem
+            - fsstat
+          processors:
+          - drop_event.when.regexp:
+              system.filesystem.mount_point: '^/(sys|cgroup|proc|dev|etc|host|lib)($|/)'
+      kubernetes.yml: |-
+        - module: kubernetes
+          metricsets:
+            - node
+            - system
+            - pod
+            - container
+            - volume
+          period: 10s
+          hosts: ["localhost:10255"]
 
 - name: set up metricbeat daemonset
   k8s:
-    src: "{{ lookup('template', 'templates/metricbeat_daemonset.yml.j2') }}"
+    resource_definition: "{{ lookup('template', 'templates/metricbeat_daemonset.yml.j2') }}"
 
 - name: set up metricbeat state metrics config
   k8s:
@@ -37,11 +85,25 @@
         namespace: kube-system
         labels:
           k8s-app: metricbeat
-      data: "{{ k8ses_metricbeat_agent_state_metrics_config }}"
+      data:   
+        # This module requires `kube-state-metrics` up and running under `kube-system` namespace
+        kubernetes.yml: |-
+          - module: kubernetes
+            metricsets:
+              - state_node
+              - state_deployment
+              - state_replicaset
+              - state_pod
+              - state_container
+              # Uncomment this to get k8s events:
+              #- event
+            period: 10s
+            hosts: ["kube-state-metrics:8080"]
+
 
 - name: set up metricbeat deployment
   k8s:
-    src: "{{ lookup('template', 'templates/metricbeat_deployment.yml.j2') }}"
+    resource_definition: "{{ lookup('template', 'templates/metricbeat_deployment.yml.j2') }}"
 
 
 - name: bind metricbeat service account to its matching role
@@ -81,11 +143,12 @@
         - list
 
 - name: create account
-  api_version: v1
-  kind: ServiceAccount
-  resource_definition:
-    metadata:
-      name: metricbeat
-      namespace: kube-system
-      labels:
-        k8s-app: metricbeat
+  k8s:
+    api_version: v1
+    kind: ServiceAccount
+    resource_definition:
+      metadata:
+        name: metricbeat
+        namespace: kube-system
+        labels:
+          k8s-app: metricbeat

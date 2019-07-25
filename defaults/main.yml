@@ -1,35 +1,62 @@
 ---
 k8ses_es_version: 7.2.0
-k8ses_namespace: "es-{{ k8ses_es_version }}"
+k8ses_namespace: "es-{{ k8ses_es_version | replace('.','-') }}"
 k8ses_cluster_name: "{{ k8ses_namespace }}"
-k8ses_infra: aws
+k8ses_infra: aws  # set to 'aws' or 'gcp' for cloud-based or 'k8s' for custom
+
+# these storage defaults will be overridden automatically if k8ses_infra is set
+# if storage_type is set in the playbook, it will be left intact even if infra is set
+k8ses_storage_provisioner: kubernetes.io/no-provisioner
+k8ses_storage_type: ''
 
 k8ses_data_nodes: 2
-k8ses_data_volsize: 100
+k8ses_data_volsize: 100Gi
 k8ses_data_memory_limit: 1Gi
 k8ses_data_heap_size: 512m
 
 k8ses_manage_kibana: true
 k8ses_manage_beats_dash_config: true
 k8ses_manage_filebeat_agent: true
+k8ses_manage_metricbeat_agent: true
+k8ses_manage_logstash: true
+k8ses_manage_oauth2_proxy: false        # if you have an oauth2 provider (google, github, etc) and a valid SSL certificate, use this
+k8ses_manage_nginx_proxy: true          # otherwise use this.
 
 # for setting up a TLS-protected log ingestion endpoint
-k8ses_logstash_selfsigned: true         # set to false to skip SSL certificate generation
+k8ses_logstash_selfsigned: false        # set to false if terminating SSL elsewhere
 k8ses_logstash_cn: logstash.ansible.com # ignored if above is false
 k8ses_logstash_ssl_key: ''              # string contents of custom ssl key. ignored if selfsigned == true
 k8ses_logstash_ssl_crt: ''              # string contents of custom ssl cert. ignored if selfsigned == true
 
+# logstash and nginx are a LoadBalancer type and Annotations let AWS/GCE create a cloud load balancer
+k8ses_logstash_annotations: {}
+  ### AWS example
+  # service.beta.kubernetes.io/aws-load-balancer-backend-protocol: http
+  # service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:us-west-2:111111111111:certificate/68111146-e1c8-4325-8a29-2d0155555db9"
+  # service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "https"
+k8ses_nginx_annotations: {}
+  ### AWS example
+  # service.beta.kubernetes.io/aws-load-balancer-backend-protocol: http
+  # service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:us-west-2:111111111111:certificate/68111146-e1c8-4325-8a29-2d0155555db9"
+  # service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "https"
 
-# for oauth2 authentication. more info: https://hub.docker.com/r/machinedata/oauth2_proxy/
-k8ses_use_oauth2_proxy: true
-k8ses_kibana_ssl_crt: ''        # ssl crt and key must be valid for oauth2
-k8ses_kibana_ssl_key: ''        # to function correctly
-k8ses_oauth2_provider: google
+# this is for the HTTP Basic auth proxy
+k8ses_nginx_users:
+  - name: kibana
+    password: letmein
+
+# for oauth2 authentication. ignored if k8ses_manage_oauth2_proxy == false
+# more info: https://hub.docker.com/r/machinedata/oauth2_proxy/
+# ssl crt and key must be valid on  the domain used for kibana
+k8ses_oauth2_ssl_crt: ''        
+k8ses_oauth2_ssl_key: ''
 k8ses_oauth2_client_id: ''
 k8ses_oauth2_client_secret: ''
 k8ses_email_domains: ['*']
 
-### you probably don't need to change anything below here ###
+#############################################################
+### you probably don't need to change anything below this ###
+#############################################################
 k8ses_es_image: docker.elastic.co/elasticsearch/elasticsearch
 k8ses_es_image_tag: "{{ k8ses_es_version }}"
 
@@ -43,104 +70,13 @@ k8ses_kibana_image_tag: "{{ k8ses_es_version }}"
 k8ses_filebeat_image: docker.elastic.co/beats/filebeat
 k8ses_filebeat_image_tag: "{{ k8ses_es_version }}"
 
-k8ses_filebeat_agent_config: |-
-  filebeat.config:
-    inputs:
-      # Mounted `filebeat-inputs` configmap:
-      path: ${path.config}/inputs.d/*.yml
-      # Reload inputs configs as they change:
-      reload.enabled: false
-    modules:
-      path: ${path.config}/modules.d/*.yml
-      # Reload module configs as they change:
-      reload.enabled: false
-  processors:
-    - add_cloud_metadata:
-  output.elasticsearch:
-    hosts: ['http://es.{{namespace}}.svc.cluster.local:9200']
-
-k8s_filebeat_agent_inputs_config: 
-  filebeat.yml: |-
-    - type: docker
-      json.keys_under_root: false
-      json.add_error_key: false
-      json.ignore_decoding_error: true
-      containers.ids:
-        - "*"
-      processors:
-        - add_kubernetes_metadata:
-            in_cluster: true
-
 k8ses_metricbeat_image: docker.elastic.co/beats/metricbeat
 k8ses_metricbeat_image_tag: "{{ k8ses_es_version }}"
-
-k8ses_metricbeat_agent_config: |-
-  metricbeat.config.modules:
-    # Mounted `metricbeat-daemonset-modules` configmap:
-    path: ${path.config}/modules.d/*.yml
-    # Reload module configs as they change:
-    reload.enabled: false
-
-  processors:
-    - add_cloud_metadata:
-
-  output.elasticsearch:
-    hosts: ['http://es.{{ k8ses_namespace }}.svc.cluster.local:9200']
-
-k8ses_metricbeat_agent_daemonset_config: 
-  system.yml: |-
-    - module: system
-      period: 10s
-      metricsets:
-        - cpu
-        - load
-        - memory
-        - network
-        - process
-        - process_summary
-        #- core
-        #- diskio
-        #- socket
-      processes: ['.*']
-      process.include_top_n:
-        by_cpu: 5      # include top 5 processes by CPU
-        by_memory: 5   # include top 5 processes by memory
-
-    - module: system
-      period: 1m
-      metricsets:
-        - filesystem
-        - fsstat
-      processors:
-      - drop_event.when.regexp:
-          system.filesystem.mount_point: '^/(sys|cgroup|proc|dev|etc|host|lib)($|/)'
-  kubernetes.yml: |-
-    - module: kubernetes
-      metricsets:
-        - node
-        - system
-        - pod
-        - container
-        - volume
-      period: 10s
-      hosts: ["localhost:10255"]
-
-k8ses_metricbeat_agent_state_metrics_config:
-  # This module requires `kube-state-metrics` up and running under `kube-system` namespace
-  kubernetes.yml: |-
-    - module: kubernetes
-      metricsets:
-        - state_node
-        - state_deployment
-        - state_replicaset
-        - state_pod
-        - state_container
-        # Uncomment this to get k8s events:
-        #- event
-      period: 10s
-      hosts: ["kube-state-metrics:8080"]
-
 
 k8ses_logstash_image: docker.elastic.co/logstash/logstash
 k8ses_logstash_image_tag: "{{ k8ses_es_version }}"
 k8ses_logstash_beats_port: 8751
+
+k8ses_oauth2_provider: google
+k8ses_oauth2_image: machinedata/oauth2_proxy
+k8ses_oauth2_image_tag: "2.2"

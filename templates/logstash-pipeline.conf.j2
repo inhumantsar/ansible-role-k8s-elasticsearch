@@ -3,10 +3,12 @@
 input {
     beats {
         port => {{ k8ses_logstash_beats_port }}
+        {% if (k8ses_logstash_ssl_key and k8ses_logstash_ssl_crt) or k8ses_logstash_selfsigned %}
         ssl => true
         ssl_key => "/usr/share/logstash/ssl/logstash.key"
         ssl_certificate => "/usr/share/logstash/ssl/logstash.crt"
         ssl_verify_mode => force_peer
+        {% endif %}
     }
 }
 
@@ -85,7 +87,7 @@ filter {
 
 output {
       elasticsearch {
-          hosts => ["http://es.{{ k8ses_namespace }}.svc.cluster.local:9200"]
+          hosts => ["http://es-master.{{ k8ses_namespace }}.svc.cluster.local:9200"]
           manage_template => false
           index => "%{[@metadata][beat]}-%{[@metadata][version]}-%{+YYYY.MM.dd}"
       }

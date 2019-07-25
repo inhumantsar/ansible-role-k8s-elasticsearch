@@ -15,7 +15,7 @@ spec:
       serviceAccountName: metricbeat
       containers:
       - name: metricbeat
-        image: {{ k8ses_metricbeat_image }}:{{ k8ses_metricbeat_image_tag }}
+        image: "{{  k8ses_metricbeat_image }}:{{ k8ses_metricbeat_image_tag  }}"
         args: [
           "-c", "/etc/metricbeat.yml",
           "-e",

@@ -1,0 +1,134 @@
+- name: ensure passlib is installed
+  pip:
+    name: passlib
+  become: true
+
+- name: generate/update passwd file for nginx auth
+  htpasswd:
+    path: /tmp/htpasswd
+    name: "{{ item.name }}"
+    password: "{{ item.password }}"
+  with_items: "{{ k8ses_nginx_users }}"
+
+- name: read htpasswd file in
+  set_fact:
+    k8ses_nginx_htpasswd: "{{ lookup('file', '/tmp/htpasswd') }}"
+
+- name: create/update nginx configmap
+  k8s:
+    api_version: v1
+    kind: ConfigMap
+    namespace: "{{ k8ses_namespace }}"
+    resource_definition:
+      metadata:
+        name: nginx-conf
+      data:
+        htpasswd: "{{ k8ses_nginx_htpasswd }}"
+        basic_auth_proxy.conf: |-
+          upstream app {
+            server kibana.{{ k8ses_namespace }}.svc.cluster.local:5601;
+            keepalive 1024;
+          }
+
+          server {
+            listen 80 default_server;
+
+            auth_basic "Restricted Area";
+            auth_basic_user_file /etc/nginx/htpasswd;
+
+            location / {
+              proxy_pass http://app/;
+              proxy_http_version 1.1;
+            }
+          }
+        nginx.conf: |-
+          user  nginx;
+          worker_processes  1;
+
+          error_log  /var/log/nginx/error.log warn;
+          pid        /var/run/nginx.pid;
+
+
+          events {
+              worker_connections  1024;
+          }
+
+
+          http {
+              # include       /etc/nginx/mime.types;
+              # default_type  application/octet-stream;
+
+              log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                                '$status $body_bytes_sent "$http_referer" '
+                                '"$http_user_agent" "$http_x_forwarded_for"';
+
+              access_log  /var/log/nginx/access.log  main;
+
+              sendfile        on;
+              #tcp_nopush     on;
+
+              keepalive_timeout  65;
+
+              #gzip  on;
+
+              include /etc/nginx/conf.d/*.conf;
+          }
+
+- name: create nginx service with loadbalancer
+  k8s_service:
+    name: nginx
+    namespace: "{{ k8ses_namespace }}"
+    type: LoadBalancer
+    ports:
+    - port: 80
+      targetPort: 80
+      name: http
+    - port: 443
+      targetPort: 80
+      name: https
+    selector:
+      app: nginx
+    resource_definition:
+      metadata:
+        annotations: "{{ k8ses_nginx_annotations }}"
+
+- name: create nginx deployment
+  k8s:
+    api_version: apps/v1beta1
+    kind: Deployment
+    namespace: "{{ k8ses_namespace }}"
+    resource_definition:
+      metadata:
+        name: nginx
+      spec:
+        replicas: 1
+        template:
+          metadata:
+            labels:
+              app: nginx
+          spec:
+            containers:
+            - name: nginx
+              image: nginx
+              ports:
+              - containerPort: 80
+              volumeMounts:
+              - mountPath: /etc/nginx
+                readOnly: true
+                name: nginx-conf
+              - mountPath: /var/log/nginx
+                name: log
+            volumes:
+            - name: nginx-conf
+              configMap:
+                name: nginx-conf
+                items:
+                  - key: htpasswd
+                    path: htpasswd
+                  - key: nginx.conf
+                    path: nginx.conf
+                  - key: basic_auth_proxy.conf
+                    path: conf.d/basic_auth_proxy.conf    # additional configs could be injected on this path...
+            - name: log
+              emptyDir: {}
+

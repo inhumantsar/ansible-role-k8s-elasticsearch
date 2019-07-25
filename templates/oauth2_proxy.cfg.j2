@@ -1,0 +1,12 @@
+client_id = "{{ k8ses_oauth2_client_id }}"
+client_secret = "{{ k8ses_oauth2_client_secret }}"
+cookie_name = "kibana_{{ k8ses_namespace }}"
+cookie_secret = "{{ k8ses_oauth2_client_secret }}"
+email_domains = "{{ k8ses_email_domains | to_json }}"
+provider = "{{ k8ses_oauth2_provider }}"
+https_address = "0.0.0.0:4433"
+tls_cert_file = "/conf/tls.crt"
+tls_key_file = "/conf/tls.key"
+upstreams = [
+  "http://kibana.{{ namespace }}.svc.cluster.local:5601",
+]

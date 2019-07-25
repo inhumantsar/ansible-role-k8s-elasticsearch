@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  namespace: {{ k8ses_namespace }}
+  namespace: "{{ k8ses_namespace }}"
   name: es-master
   labels:
     app: es
@@ -103,7 +103,7 @@ spec:
               value: "false"
 
             - name: cluster.name
-              value: {{ k8ses_cluster_name }}
+              value: "{{  k8ses_cluster_name  }}"
             - name: node.name
               valueFrom:
                 fieldRef:
@@ -130,7 +130,7 @@ spec:
       spec:
         accessModes:
           - ReadWriteOnce
-        storageClassName: {{ k8ses_storage_type }}
+        storageClassName: "{{  k8ses_storage_type  }}"
         resources:
           requests:
             storage: 10Gi

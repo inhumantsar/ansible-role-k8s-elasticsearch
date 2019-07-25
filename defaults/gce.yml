@@ -1,2 +1,0 @@
-k8ses_storage_provisioner: kubernetes.io/gce-pd
-k8ses_storage_type: pd-ssd
