@@ -171,7 +171,7 @@
               - name: logstash
                 image: "{{ k8ses_logstash_image }}:{{ k8ses_logstash_image_tag }}"
                 ports:
-                  - containerPort: 9600
+                  - containerPort: "{{ k8ses_logstash_beats_port }}"
                 volumeMounts: "{{ logstash_volume_mounts }}"
 
             # spec.template.spec.volumes
